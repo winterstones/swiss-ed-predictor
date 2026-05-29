@@ -186,19 +186,43 @@ if selected_model_name == "Modèle Linéaire (Ridge)":
         explanation = shap.Explanation(values=contributions, base_values=base_value, data=simulated_df.iloc[0].values, feature_names=FEATURE_COLS)
         shap.plots.waterfall(explanation, max_display=7, show=False)
     else:
-        explanation = shap.Explanation(values=np.array([12.5, -5.2, 8.4, -3.1, 2.0]), base_values=130.0, data=np.array([25.0, 2.5, 45.0, 5.0, 25.0]), feature_names=["Température Max", "Sévérité Triage", "Âge Moyen", "Cas IPS", "Score NEMS"])
+        # Fallback dynamique s'appuyant sur la longueur réelle de FEATURE_COLS
+        mock_contributions = np.zeros(len(FEATURE_COLS))
+        mock_contributions[15] = 12.5  # temp_max
+        mock_contributions[9] = 8.4    # mean_severity
+        mock_contributions[12] = 4.1   # mean_age
+        
+        explanation = shap.Explanation(values=mock_contributions, base_values=130.0, data=simulated_df.iloc[0].values, feature_names=FEATURE_COLS)
         shap.plots.waterfall(explanation, max_display=7, show=False)
 else:
     # Random Forest
     if rf_model is not None and 'simulated_df_j1' in locals():
+        # L'ordre des colonnes après ColumnTransformer est : num_features puis cat_features
+        RF_FEATURE_NAMES_ORDERED = [
+            'month', 'notfall_lag1', 'notfall_lag7', 'notfall_roll7', 
+            'mean_severity_lag1', 'mean_nems_lag1', 'ips_cases_lag1', 'mean_age_lag1', 'pct_elderly_lag1', 
+            'temperature_avg', 'temperature_max', 'temperature_min',
+            'day_of_week', 'is_weekend', 'is_winter', 'is_summer', 'is_holidays'
+        ]
+        
         # Approximation SHAP rapide pour Random Forest
         importances = rf_model.named_steps['reg'].feature_importances_
         contributions = (importances - importances.mean()) * 20.0 # Facteur visuel dynamique
         base_value = 140.0
-        explanation = shap.Explanation(values=contributions, base_values=base_value, data=simulated_df_j1.iloc[0].values, feature_names=FEATURE_COLS)
+        
+        # Réorganiser les données saisies pour correspondre à l'ordre du modèle
+        data_ordered = simulated_df_j1[RF_FEATURE_NAMES_ORDERED].iloc[0].values
+        
+        explanation = shap.Explanation(values=contributions, base_values=base_value, data=data_ordered, feature_names=RF_FEATURE_NAMES_ORDERED)
         shap.plots.waterfall(explanation, max_display=7, show=False)
     else:
-        explanation = shap.Explanation(values=np.array([8.0, 5.0, 3.0, -2.0, -1.0]), base_values=135.0, data=np.array([25.0, 25.0, 0.25, 1, 0]), feature_names=["Température Max", "Score NEMS", "Pct +65", "Hiver", "Weekend"])
+        # Fallback dynamique pour le RF
+        mock_contributions = np.zeros(len(FEATURE_COLS))
+        mock_contributions[15] = 8.0   # temp_max
+        mock_contributions[10] = 5.0   # mean_nems
+        mock_contributions[13] = 3.0   # pct_elderly
+        
+        explanation = shap.Explanation(values=mock_contributions, base_values=135.0, data=simulated_df.iloc[0].values, feature_names=FEATURE_COLS)
         shap.plots.waterfall(explanation, max_display=7, show=False)
 
 fig_shap.tight_layout()
