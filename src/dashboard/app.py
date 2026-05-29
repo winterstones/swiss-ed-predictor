@@ -107,6 +107,17 @@ if len(hist_df_filtered) < 7:
 last_row = hist_df_filtered.iloc[-1]
 last_date = last_row['date']
 
+@st.cache_resource
+def load_xgboost_model():
+    try:
+        xgb_model = joblib.load("models/xgboost_ed_model.joblib")
+        cols = joblib.load("models/model_features.joblib")
+        return xgb_model, cols
+    except Exception:
+        return None, None
+
+xgb_model, xgb_features_cols = load_xgboost_model()
+
 # --- GENERATE PREDICTIONS ---
 # We will predict the next 4 days
 predictions = []
@@ -143,15 +154,17 @@ for i, d in enumerate(future_dates):
     if i == 0:
         payload_j1 = payload
     
-    try:
-        res = requests.post(f"{API_URL}/predict", json=payload, timeout=5)
-        if res.status_code == 200:
-            pred_val = res.json()["predicted_visits"]
-        else:
-            # Fallback mock prediction if API returns 503 (Model not loaded)
-            pred_val = current_lag_1 + (sim_temp - 20) * 1.5
-    except:
-        # Fallback if API is completely unreachable
+    # Native Model Inference (Bypass API for Monolithic Deployment)
+    if xgb_model is not None and xgb_features_cols is not None:
+        simulated_df = pd.DataFrame([payload])
+        # Ensure all required features are present
+        for col in xgb_features_cols:
+            if col not in simulated_df.columns:
+                simulated_df[col] = 0
+        simulated_df = simulated_df[xgb_features_cols]
+        pred_val = float(xgb_model.predict(simulated_df)[0])
+    else:
+        # Fallback if model files are missing
         pred_val = current_lag_1 + (sim_temp - 20) * 1.5
             
     predictions.append(pred_val)
