@@ -23,9 +23,10 @@ env/
 #!data/.gitkeep
 
 # Models
-models/*.pkl
-models/*.joblib
-models/*.json
+# (Commented out to allow pushing the tiny trained .joblib files for the Hackathon)
+# models/*.pkl
+# models/*.joblib
+# models/*.json
 !models/.gitkeep
 
 # Notebooks checkpoints
