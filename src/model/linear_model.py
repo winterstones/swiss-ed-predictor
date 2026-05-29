@@ -4,7 +4,7 @@ from sklearn.linear_model import Ridge
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error, root_mean_squared_error
 
-from src.model.model_preparation import (
+from model_preparation import (
     train_features, train_target,
     val_features,   val_target,
     test_features,  test_target,

@@ -16,7 +16,11 @@ df['is_holidays'] = df.apply(lambda row: holidays.Switzerland(subdiv=row['kanton
 ############## Manage data ############## 
 
 df['day_of_week'] = df['day_of_week'].astype('category')
-df['is_holidays'] = df['is_holidays'].astype(int)
+df["is_weekend"] = df["is_weekend"].astype("category")
+df["is_winter"] = df["is_winter"].astype("category")
+df["is_summer"] = df["is_summer"].astype("category")
+df['is_holidays'] = df['is_holidays'].astype(int) # transform the True/False into 0/1
+df["is_holidays"] = df["is_holidays"].astype("category")
 
 # Create lag for pct_elderly and mean_age columns
 df = df.sort_values(['kanton_hospital', 'date'])
