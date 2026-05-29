@@ -13,8 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # App code
 COPY src/ ./src/
-COPY models/ ./models/
-COPY data/processed/ ./data/processed/
+COPY . .
 
 EXPOSE 8000 8501
 
