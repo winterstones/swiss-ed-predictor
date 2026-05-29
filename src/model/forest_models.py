@@ -15,50 +15,29 @@ from sklearn.impute import SimpleImputer
 
 # Models
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.model_selection import GridSearchCV
+
 
 # Metrics
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, root_mean_squared_error
 
 from sklearn.model_selection import TimeSeriesSplit  # for future
 
 import holidays
 
-csv_path = "spiges_meteo_joined.csv"
+from model_preparation import (
+    train_features, train_target,
+    val_features,   val_target,
+    test_features,  test_target,
+)
+
+X_train = train_features
+y_train = train_target
+
+X_val = val_features
+y_val = val_target
+
 out_path = "results/random_forest/"
-os.makedirs(out_path, exist_ok=True)
-
-FEATURE_COLS = [
-    "month", "day_of_week", "is_weekend", "is_winter", "is_summer", "is_holidays",
-    "notfall_lag1", "notfall_lag7", "notfall_roll7",
-    "pct_elderly", "mean_nems",
-    "temperature_avg", "temperature_max", "temperature_min",
-]
-
-TARGET_COL = "total_admissions"
-
-df = pd.read_csv(csv_path, parse_dates=["date"])
-df["is_holidays"] = df.apply(lambda row: holidays.Switzerland(subdiv=row["kanton_hospital"], years=row["year"]).get(row["date"]) is not None, axis=1)
-df = df.sort_values("date").reset_index(drop=True)
-df = df.dropna(subset=[TARGET_COL] + FEATURE_COLS)
-
-df["is_weekend"] = df["is_weekend"].astype("category")
-df["is_winter"] = df["is_winter"].astype("category")
-df["is_summer"] = df["is_summer"].astype("category")
-df["is_holidays"] = df["is_holidays"].astype("category")
-
-
-n = len(df)
-train_end = int(n * 0.80)
-
-train = df.iloc[:train_end]
-val   = df.iloc[train_end:]
-
-X_train = train[FEATURE_COLS].reset_index(drop=True)
-y_train   = train[TARGET_COL].reset_index(drop=True)
-
-X_val   = val[FEATURE_COLS].reset_index(drop=True)
-y_val     = val[TARGET_COL].reset_index(drop=True)
 
 
 # ── Preprocessing pipeline ─────────────────────────────────────────────────
@@ -94,7 +73,7 @@ results = {}  # in case we want to run other models, or do cv, etc.
 
 rf = Pipeline([
     ('pre', preprocessor),
-    ('reg', RandomForestRegressor(n_estimators=200, random_state=10))
+    ('reg', RandomForestRegressor(n_estimators=100, random_state=10))
 ])
 
 rf.fit(X_train, y_train)
@@ -102,6 +81,7 @@ y_pred_rf = rf.predict(X_val)
 results["rf"] = {
         'mse': mean_squared_error(y_val, y_pred_rf),
         'mae': mean_absolute_error(y_val, y_pred_rf),
+        'rmse': root_mean_squared_error(y_val, y_pred_rf),
         'r2': r2_score(y_val, y_pred_rf)
     }
 pd.DataFrame([results["rf"]]).to_csv(os.path.join(out_path, "metrics.csv"), index=False)
