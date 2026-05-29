@@ -79,65 +79,50 @@ HOSPITAL_COUNTERS: dict[str, list[str]] = {
 }
 
 # Namespaces DATEX II
-_NS = {
-    "soap": "http://schemas.xmlsoap.org/soap/envelope/",
-    "dx2":  "http://datex2.eu/schema/2/2_0",
-    "dx223":"http://opentransportdata.swiss/datex2/2.3",
-}
+_NS_DX2        = "http://datex2.eu/schema/2/2_0"
+_NS_XSI        = "http://www.w3.org/2001/XMLSchema-instance"
+_SOAP_ACTION   = "http://opentransportdata.swiss/TDP/Soap_Datex2/Pull/v1"
 
 
 # ═══════════════════════════════════════════════════════════════════
 # 1. SOAP REQUESTS
 # ═══════════════════════════════════════════════════════════════════
 
-def _build_soap_measured_data(counter_ids: list[str]) -> str:
+def _build_soap_d2_request() -> str:
+    """SOAP envelope DATEX II avec échange minimal (namespace correct)."""
+    return """<?xml version="1.0" encoding="UTF-8"?>
+<SOAP-ENV:Envelope
+    xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
+    xmlns:dx223="http://datex2.eu/schema/2/2_0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <SOAP-ENV:Header/>
+  <SOAP-ENV:Body>
+    <dx223:d2LogicalModel modelBaseVersion="2">
+      <dx223:exchange>
+        <dx223:supplierIdentification>
+          <dx223:country>ch</dx223:country>
+          <dx223:nationalIdentifier>OTD_client</dx223:nationalIdentifier>
+        </dx223:supplierIdentification>
+      </dx223:exchange>
+    </dx223:d2LogicalModel>
+  </SOAP-ENV:Body>
+</SOAP-ENV:Envelope>"""
+
+
+def _build_soap_measured_data(_counter_ids: list[str]) -> str:
     """
     Construit le SOAP envelope pour pullMeasuredData (DATEX II).
-    Filtre sur les compteurs spécifiés.
+    Le filtrage par compteur est effectué côté client après réception.
     """
-    filters = "\n".join([
-        f'<dx223:siteRequestReference '
-        f'xsi:type="dx223:_MeasurementSiteRecordVersionedReference" '
-        f'targetClass="MeasurementSiteRecord" '
-        f'id="{cid}" version="0"/>'
-        for cid in counter_ids
-    ])
-
-    return f"""<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope
-    xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-    xmlns:dx223="http://opentransportdata.swiss/datex2/2.3">
-  <soapenv:Header/>
-  <soapenv:Body>
-    <dx223:pullMeasuredData>
-      <dx223:measuredDataFilter xsi:type="dx223:MeasuredDataFilter">
-        <dx223:measurementSiteTableReference
-          xsi:type="dx223:_MeasurementSiteTableVersionedReference"
-          targetClass="MeasurementSiteTable"
-          id="OTD:TrafficData"
-          version="0"/>
-        {filters}
-      </dx223:measuredDataFilter>
-    </dx223:pullMeasuredData>
-  </soapenv:Body>
-</soapenv:Envelope>"""
+    return _build_soap_d2_request()
 
 
 def _build_soap_site_table() -> str:
     """Construit le SOAP envelope pour pullMeasurementSiteTable."""
-    return """<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope
-    xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-    xmlns:dx223="http://opentransportdata.swiss/datex2/2.3">
-  <soapenv:Header/>
-  <soapenv:Body>
-    <dx223:pullMeasurementSiteTable/>
-  </soapenv:Body>
-</soapenv:Envelope>"""
+    return _build_soap_d2_request()
 
 
-def _post_soap(payload: str, timeout: int = 30) -> str:
+def _post_soap(payload: str, timeout: int = 30, soap_action: str = "") -> str:
     """
     Envoie une requête SOAP à l'API traffic counters.
     Retourne le XML brut de la réponse.
@@ -146,7 +131,7 @@ def _post_soap(payload: str, timeout: int = 30) -> str:
     headers = {
         "Content-Type":  "text/xml; charset=utf-8",
         "Authorization": f"Bearer {token}",
-        "SOAPAction":    "",
+        "SOAPAction":    soap_action,
     }
 
     with httpx.Client(timeout=timeout) as client:
@@ -160,19 +145,25 @@ def _post_soap(payload: str, timeout: int = 30) -> str:
 # 2. PARSE DATEX II XML
 # ═══════════════════════════════════════════════════════════════════
 
-def _parse_measured_data(xml_text: str) -> list[dict]:
+def _parse_measured_data(
+    xml_text: str,
+    filter_ids: Optional[set] = None,
+) -> list[dict]:
     """
     Parse la réponse DATEX II XML et extrait les mesures de trafic.
 
     Chaque enregistrement contient :
       - site_id       : ID du compteur (ex: "CH:0003.01")
       - timestamp     : horodatage de la mesure
-      - light_vehicles: nb véhicules légers (classes 1-7)
-      - heavy_vehicles: nb poids lourds (classes 8-10)
-      - avg_speed_kmh : vitesse moyenne
+      - total_vehicles: somme des débits TrafficFlow valides (veh/h)
+      - avg_speed_kmh : vitesse moyenne km/h
+
+    Args:
+        xml_text:   XML brut de la réponse SOAP.
+        filter_ids: si fourni, ne retourne que les sites dans cet ensemble.
 
     Returns:
-        Liste de dict — un par compteur par minute.
+        Liste de dict — un par compteur.
     """
     records = []
     try:
@@ -181,41 +172,47 @@ def _parse_measured_data(xml_text: str) -> list[dict]:
         logger.error(f"DATEX II XML parse error: {e}")
         return records
 
-    # Chercher les éléments measuredValue dans toute la hiérarchie
-    # DATEX II: .../siteMeasurements/measuredValue
-    for site in root.iter("siteMeasurements"):
-        site_id_el = site.find(".//measurementSiteReference")
-        site_id    = site_id_el.get("id", "unknown") if site_id_el is not None else "unknown"
+    NS  = _NS_DX2
+    XSI = _NS_XSI
 
-        timestamp_el = site.find(".//measurementTimeDefault")
-        timestamp    = timestamp_el.text if timestamp_el is not None else None
+    for site in root.iter(f"{{{NS}}}siteMeasurements"):
+        ref_el  = site.find(f"{{{NS}}}measurementSiteReference")
+        site_id = ref_el.get("id", "unknown") if ref_el is not None else "unknown"
 
-        light_v, heavy_v, avg_speed = 0, 0, 0.0
+        if filter_ids is not None and site_id not in filter_ids:
+            continue
 
-        for mv in site.findall(".//measuredValue"):
-            # Détecter le type de mesure
-            basic = mv.find(".//basicData")
+        ts_el     = site.find(f"{{{NS}}}measurementTimeDefault")
+        timestamp = ts_el.text if ts_el is not None else None
+
+        total_flow, avg_speed = 0, 0.0
+
+        # Each outer measuredValue wraps one inner measuredValue with the data
+        for outer_mv in site.findall(f"{{{NS}}}measuredValue"):
+            inner_mv = outer_mv.find(f"{{{NS}}}measuredValue")
+            if inner_mv is None:
+                continue
+            basic = inner_mv.find(f"{{{NS}}}basicData")
             if basic is None:
                 continue
 
-            data_type = basic.get("{http://www.w3.org/2001/XMLSchema-instance}type", "")
+            # Skip measurements flagged as erroneous
+            err_el = basic.find(f".//{{{NS}}}dataError")
+            if err_el is not None and err_el.text == "true":
+                continue
 
-            if "TrafficFlow" in data_type or "VehicleFlow" in data_type:
-                count_el = basic.find(".//vehicleFlowRate")
-                if count_el is not None:
+            btype = basic.get(f"{{{XSI}}}type", "")
+
+            if "TrafficFlow" in btype:
+                flow_el = basic.find(f".//{{{NS}}}vehicleFlowRate")
+                if flow_el is not None:
                     try:
-                        count = int(float(count_el.text))
-                        # Distinguer léger vs lourd par l'index de la valeur
-                        idx = mv.get("index", "1")
-                        if idx in ["1", "2"]:
-                            light_v += count
-                        else:
-                            heavy_v += count
+                        total_flow += int(float(flow_el.text))
                     except (ValueError, TypeError):
                         pass
 
-            elif "TrafficSpeed" in data_type:
-                speed_el = basic.find(".//speed")
+            elif "TrafficSpeed" in btype:
+                speed_el = basic.find(f".//{{{NS}}}speed")
                 if speed_el is not None:
                     try:
                         avg_speed = float(speed_el.text)
@@ -225,9 +222,9 @@ def _parse_measured_data(xml_text: str) -> list[dict]:
         records.append({
             "site_id":        site_id,
             "timestamp":      timestamp,
-            "light_vehicles": light_v,
-            "heavy_vehicles": heavy_v,
-            "total_vehicles": light_v + heavy_v,
+            "light_vehicles": total_flow,
+            "heavy_vehicles": 0,
+            "total_vehicles": total_flow,
             "avg_speed_kmh":  avg_speed,
         })
 
@@ -267,8 +264,9 @@ def fetch_traffic_realtime(
 
     try:
         payload  = _build_soap_measured_data(counter_ids)
-        xml_text = _post_soap(payload, timeout)
-        records  = _parse_measured_data(xml_text)
+        xml_text = _post_soap(payload, timeout,
+                              soap_action=f"{_SOAP_ACTION}/pullMeasuredData")
+        records  = _parse_measured_data(xml_text, filter_ids=set(counter_ids))
 
         if not records:
             logger.warning(f"No traffic records parsed for {canton}")
@@ -481,7 +479,26 @@ if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv()
 
-    canton = sys.argv[1].upper() if len(sys.argv) > 1 else "BE"
+    args = sys.argv[1:]
+
+    # Debug mode: discover real measurement site IDs from the server
+    if "--site-table" in args:
+        print(f"\n{'='*50}")
+        print("Traffic Counters — debug: pullMeasurementSiteTable")
+        print(f"{'='*50}")
+        try:
+            payload  = _build_soap_site_table()
+            xml_text = _post_soap(payload, timeout=30,
+                                  soap_action=f"{_SOAP_ACTION}/pullMeasurementSiteTable")
+            print("\n✅ Site table response (first 2000 chars):")
+            print(xml_text[:2000])
+        except EnvironmentError as e:
+            print(f"\n❌ Token manquant: {e}")
+        except Exception as e:
+            print(f"\n❌ Erreur: {e}")
+        sys.exit(0)
+
+    canton = args[0].upper() if args else "BE"
     print(f"\n{'='*50}")
     print(f"Traffic Counters — test canton {canton}")
     print(f"{'='*50}")
@@ -496,7 +513,12 @@ if __name__ == "__main__":
         print(f"\n✅ Daily aggregated:")
         print(daily.to_string(index=False))
     else:
-        print(f"\n⚠️  No data — vérifier OPENTRANSPORT_TOKEN dans .env")
+        token_set = bool(os.environ.get("OPENTRANSPORT_TOKEN"))
+        if not token_set:
+            print(f"\n⚠️  No data — OPENTRANSPORT_TOKEN manquant dans .env")
+        else:
+            print(f"\n⚠️  No data — API error (voir logs ci-dessus)")
+            print(f"    Conseil: run with --site-table pour vérifier les IDs compteurs valides")
         print(f"\nFeatures disponibles ({len(get_traffic_feature_names())}):")
         for f in get_traffic_feature_names():
             print(f"  {f}")
