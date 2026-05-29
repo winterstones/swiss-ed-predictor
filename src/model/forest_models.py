@@ -115,3 +115,9 @@ ax.set_ylabel("Residual (actual - predicted)")
 ax.set_title("Residual Plot")
 plt.tight_layout()
 plt.savefig(os.path.join(out_path, "residuals.png"))
+
+# ── EXPORT MODEL FOR DASHBOARD ─────────────────────────────────────────────
+import joblib
+os.makedirs("models", exist_ok=True)
+joblib.dump(rf, "models/forest_model.joblib")
+print("\n[✓] Modèle Random Forest sauvegardé dans 'models/forest_model.joblib'")
