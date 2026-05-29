@@ -20,6 +20,7 @@ y_train = train_target.values
 y_val   = val_target.values
 y_test  = test_target.values
 
+
 # ── Tune alpha on validation set ──────────────────────────────────────
 alphas = [0.01, 0.1, 1.0, 10.0, 50.0, 100.0, 500.0, 1000.0]
 best_alpha, best_val_mae = None, float("inf")
@@ -39,12 +40,14 @@ for alpha in alphas:
 
 print(f"\nBest alpha: {best_alpha}  (val MAE={best_val_mae:.3f})")
 
+
 # ── Retrain on train+val with best alpha ──────────────────────────────
 X_trainval = np.vstack([X_train, X_val])
 y_trainval = np.concatenate([y_train, y_val])
 
 final_model = Ridge(alpha=best_alpha)
 final_model.fit(X_trainval, y_trainval)
+
 
 # ── Evaluate on held-out test set ─────────────────────────────────────
 y_pred = final_model.predict(X_test)
@@ -56,6 +59,7 @@ print(f"\nTest set results (alpha={best_alpha}):")
 print(f"  MAE        : {test_mae:.3f}")
 print(f"  RMSE       : {test_rmse:.3f}")
 print(f"  Baseline MAE (predict mean): {baseline_mae:.3f}")
+
 
 # ── Coefficients ranked by importance ────────────────────────────────
 coef_df = pd.DataFrame({
